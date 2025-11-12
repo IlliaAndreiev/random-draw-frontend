@@ -1,0 +1,214 @@
+import React, { useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from "react";
+
+// =============================
+// Reusable Roulette Wheel (SVG)
+// =============================
+// Usage (imperative):
+// const wheelRef = useRef<RouletteWheelHandle>(null)
+// <RouletteWheel ref={wheelRef} items={participants} onDone={(id)=>{}} />
+// wheelRef.current?.spinTo(winnerId)
+
+export type WheelItem = { id: string; label: string };
+
+export type RouletteWheelHandle = {
+  spinTo: (winnerId: string, opts?: { spins?: number; durationMs?: number }) => void;
+  reset: () => void;
+};
+
+export function RouletteWheel(
+  { items, size = 360, onDone }: { items: WheelItem[]; size?: number; onDone?: (winnerId: string) => void },
+  ref: React.Ref<RouletteWheelHandle>
+) {
+  const [rotation, setRotation] = useState(0); // in degrees
+  const [spinning, setSpinning] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const wheelRef = useRef<HTMLDivElement | null>(null);
+
+  // slice geometry
+  const sliceAngle = items.length > 0 ? 360 / items.length : 0;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2 - 6; // padding for stroke
+
+  // pastel-ish colors
+  const colors = useMemo(() =>
+    items.map((_, i) => `hsl(${(i * 360) / (items.length || 1)}, 75%, 70%)`),
+  [items]
+  );
+
+  // expose imperative API
+  useImperativeHandle(ref, () => ({
+    spinTo: (winnerId, opts) => {
+      if (!items.length) return;
+      const idx = items.findIndex((it) => it.id === winnerId);
+      if (idx === -1) return;
+
+      const spins = opts?.spins ?? (5 + Math.floor(Math.random() * 3)); // 5..7
+      const durationMs = opts?.durationMs ?? 4500; // total animation duration
+
+      // Midpoint angle of the winning slice (0° is at top after we rotate -90° visually)
+      const winnerAngle = idx * sliceAngle + sliceAngle / 2;
+
+      // We rotate the wheel group by -90° to make 0° point up, so to land with
+      // winner at pointer (top), the wheel's absolute rotation should end at
+      // (spins * 360) + (360 - winnerAngle). We also align smoothly from current angle.
+      const current = rotation % 360; // 0..359 (can be negative)
+      const targetAbsolute = spins * 360 + (360 - winnerAngle);
+      const delta = ((targetAbsolute - current) % 360 + 360) % 360 + spins * 360; // ensure forward spin
+      const nextRotation = rotation + delta;
+
+      setSpinning(true);
+      // apply CSS transition via inline style class toggle
+      requestAnimationFrame(() => {
+        if (!wheelRef.current) return;
+        wheelRef.current.style.transition = `transform ${durationMs}ms cubic-bezier(0.12, 0.65, 0, 1)`; // easeOutCubic-ish
+        setRotation(nextRotation);
+        setSelectedId(null);
+        // after the transition, clean up
+        const onEnd = () => {
+          if (!wheelRef.current) return;
+          wheelRef.current.removeEventListener("transitionend", onEnd);
+          // freeze rotation at equivalent canonical angle to avoid precision creep
+          const canonical = nextRotation % 360;
+          wheelRef.current.style.transition = "none";
+          setRotation((prev) => prev + (canonical - (prev % 360)));
+          setSpinning(false);
+          setSelectedId(winnerId);
+          onDone?.(winnerId);
+        };
+        wheelRef.current.addEventListener("transitionend", onEnd);
+      });
+    },
+    reset: () => {
+      setSelectedId(null);
+      if (wheelRef.current) {
+        wheelRef.current.style.transition = "none";
+      }
+      setRotation(0);
+      setSpinning(false);
+    },
+  }), [items, onDone, rotation, sliceAngle]);
+
+  // --- SVG helpers ---
+  const degToRad = (deg: number) => (deg * Math.PI) / 180;
+  const polarToCartesian = (centerX: number, centerY: number, radius: number, angleInDegrees: number) => {
+    const angleInRadians = degToRad(angleInDegrees);
+    return {
+      x: centerX + radius * Math.cos(angleInRadians),
+      y: centerY + radius * Math.sin(angleInRadians),
+    };
+  };
+
+  const describeArc = (x: number, y: number, radius: number, startAngle: number, endAngle: number) => {
+    const start = polarToCartesian(x, y, radius, endAngle);
+    const end = polarToCartesian(x, y, radius, startAngle);
+    const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+    return [
+      "M", x, y,
+      "L", start.x, start.y,
+      "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y,
+      "Z",
+    ].join(" ");
+  };
+
+  return (
+    <div className="w-full flex flex-col items-center gap-4">
+      <div className="relative" style={{ width: size, height: size }}>
+        {/* Pointer */}
+        <div className="absolute left-1/2 -translate-x-1/2 -top-3 z-20"
+             style={{ width: 0, height: 0, borderLeft: "12px solid transparent", borderRight: "12px solid transparent", borderBottom: "20px solid #111827", }}
+        />
+
+        {/* Wheel */}
+        <div
+          ref={wheelRef}
+          className="absolute inset-0 will-change-transform rounded-full shadow-md"
+          style={{ transform: `rotate(${rotation - 90}deg)` }}
+        >
+          <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+            {/* Base circle */}
+            <circle cx={cx} cy={cy} r={r} fill="#fff" stroke="#e5e7eb" strokeWidth={4} />
+            {/* Slices */}
+            {items.map((item, i) => {
+              const start = i * sliceAngle;
+              const end = start + sliceAngle;
+              const path = describeArc(cx, cy, r, start, end);
+              const mid = start + sliceAngle / 2;
+              const labelPos = polarToCartesian(cx, cy, r * 0.62, mid);
+              const isSelected = item.id === selectedId;
+              return (
+                <g key={item.id}>
+                  <path d={path} fill={colors[i]} stroke="#fff" strokeWidth={1} />
+                  <text
+                    x={labelPos.x}
+                    y={labelPos.y}
+                    fontSize={Math.max(10, size / 22)}
+                    fontWeight={isSelected ? 800 : 600}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    transform={`rotate(${mid}, ${labelPos.x}, ${labelPos.y})`}
+                    fill="#111827"
+                  >
+                    {item.label}
+                  </text>
+                </g>
+              );
+            })}
+            {/* Hub */}
+            <circle cx={cx} cy={cy} r={size * 0.08} fill="#111827" />
+          </svg>
+        </div>
+      </div>
+      <div className="text-sm text-gray-600">{spinning ? "Спін у процесі…" : selectedId ? `Зупинилось на: ${items.find(i=>i.id===selectedId)?.label}` : "Готово до спіну"}</div>
+    </div>
+  );
+}
+
+export const ForwardRouletteWheel = forwardRef(RouletteWheel);
+
+// =============================
+// Demo wrapper for quick preview
+// =============================
+export default function DemoWheel() {
+  const demoItems: WheelItem[] = [
+    { id: "u1", label: "Alice" },
+    { id: "u2", label: "Bob" },
+    { id: "u3", label: "Charlie" },
+    { id: "u4", label: "Diana" },
+    { id: "u5", label: "Eve" },
+  ];
+  const ref = useRef<RouletteWheelHandle>(null);
+  const [winnerId, setWinnerId] = useState<string | null>(null);
+
+  return (
+    <div className="min-h-[480px] w-full grid place-items-center p-6 bg-slate-50">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow">
+        <h2 className="text-xl font-semibold mb-4">Roulette Wheel Demo</h2>
+        <ForwardRouletteWheel ref={ref} items={demoItems} onDone={(id)=> setWinnerId(id)} />
+        <div className="mt-6 flex gap-2">
+          <button
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-white text-sm font-semibold"
+            onClick={() => {
+              const pool = demoItems.map((i) => i.id);
+              const randomWinner = pool[Math.floor(Math.random() * pool.length)];
+              ref.current?.spinTo(randomWinner);
+            }}
+          >
+            Spin random
+          </button>
+          <button
+            className="rounded-xl border px-4 py-2 text-sm"
+            onClick={() => ref.current?.reset()}
+          >
+            Reset
+          </button>
+        </div>
+        {winnerId && (
+          <div className="mt-3 text-sm">
+            Переможець: <b>{demoItems.find((i) => i.id === winnerId)?.label}</b>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
