@@ -4,7 +4,7 @@ This project uses a free-tier Render backend.
 The server may go to sleep after a period of inactivity.
 If the app shows nothing, please open the backend once:
 
-https://your-backend.onrender.com
+https://random-draw-api.onrender.com
 
 Wait a few seconds until it wakes up, then refresh the frontend page.
 
@@ -20,9 +20,9 @@ ____________________________________________
 Сервер може перейти в режим сну після певного періоду бездіяльності.
 Якщо в додатку нічого не з'являється, відкрийте бекенд один раз:
 
-https://your-backend.onrender.com
+https://random-draw-api.onrender.com
 
-Зачекайте кілька секунд, поки він прокинеться, а потім оновлення сторінку інтерфейсу.
+Зачекайте кілька секунд, поки він прокинеться, а потім оновіть сторінку інтерфейсу.
 
 Також, ось GitHub посилання на бекенд:
 
